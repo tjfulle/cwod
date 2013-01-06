@@ -27,7 +27,7 @@ import datetime
 import time
 import argparse
 import re
-import textwrap
+from textwrap import fill as textfill
 from ConfigParser import ConfigParser
 
 WO_DB = ConfigParser()
@@ -151,7 +151,20 @@ def gen_wo(argv):
                         type=float,
                         default=90,
                         help="Duration [default: %(default)s]")
+    parser.add_argument("-S",
+                        action="store_true",
+                        default=False,
+                        help="Print summary and exit [default: %(default)s]")
     (opts, args) = parser.parse_known_args()
+
+    if opts.S:
+        types = list(set([WO_DB.get(x, "type") for x in WO_DB.sections()]))
+        print "Workout types: {0}".format(
+            ", ".join(sorted(list(set(x.split("&")[0] for x in types)))))
+        print "Number of workouts {0}".format(len(WO_DB.sections()))
+        sys.exit(textfill("Workouts: {0}".format(", ".join(WO_DB.sections())), 78,
+                          subsequent_indent="   "))
+
 
     # incompatible options
     if opts.CAMPUS and opts.HANGBOARD:
