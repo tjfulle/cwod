@@ -23,55 +23,86 @@
 import random
 import os
 import sys
-import datetime
-import time
+import logging
 import argparse
 import re
 from textwrap import fill as textfill
-from ConfigParser import ConfigParser
+import ConfigParser
 
-WO_DB = ConfigParser()
+
+SEP = "|"
+WO_DB = ConfigParser.ConfigParser()
 WO_DB.readfp(open("daily.cfg"))
-DIR = os.path.dirname(os.path.realpath(__file__))
+WORKOUTS = WO_DB.sections()
 
 
-class Logger:
-
-    def __init__(self, date, weight, time, loc, fnam=None, silent=False):
-        self.silent = silent
-        if not self.silent:
-            self.stdout = sys.stdout
-        self.logfile = None
-        if fnam is not None:
-            self.logfile = open(fnam, "w")
-            self.logfile.write("{0}\n".format(date))
-            self.logfile.write("WEIGHT: {0}\n".format(weight))
-            self.logfile.write("CLIMBING TRAINING\n")
-            self.logfile.write("TIME: {0}\n".format(time))
-            self.logfile.write("LOCATION: {0}\n".format(loc))
-        pass
-
-    def write(self, message, sp=0):
-        i = 0
-        for line in message.split("\n"):
-            line = " " * sp * i + line + "\n"
-            i = 1
-            if not self.silent:
-                self.stdout.write(line)
-            if self.logfile is not None:
-                self.logfile.write(line)
-            continue
-        if self.logfile is not None:
-            self.logfile.flush()
-        return
-
-    def close(self):
-        if self.logfile is not None:
-            self.logfile.close()
-        pass
+def disabled(workout):
+    try:
+        return WO_DB.getboolean(workout, "disabled")
+    except ConfigParser.NoOptionError:
+        return False
 
 
-def gen_wo(argv):
+def wotype(workout):
+    return WO_DB.get(workout, "type").split(SEP)
+TYPES = list(set([wotype(x)[0] for x in WORKOUTS]))
+
+
+def rope_reqd(workout):
+    try:
+        return WO_DB.getboolean(workout, "rope_reqd")
+    except ConfigParser.NoOptionError:
+        return False
+
+
+def equipment(workout):
+    try:
+        return WO_DB.get(workout, "equipment", "").split(SEP)
+    except:
+        return []
+
+
+def desc(workout):
+    return WO_DB.get(workout, "description")
+
+
+def level(workout):
+    return WO_DB.getint(x, "level")
+
+
+def msg(message, sp="  "):
+    return sp + "\n".join("{0}{1}".format(sp, x)
+                          for x in message.split("\n")).strip()
+
+
+def main(argv):
+    parser= argparse.ArgumentParser()
+    parser.add_argument("-r", action="store_true", default=False,
+                        help=("Use activities that require a rope "
+                              "[default: %(default)s]"))
+    parser.add_argument("-L", action="store", type=int, default=6,
+                        help="Max difficulty cut off level [default: %(default)s]")
+    parser.add_argument("-l", action="store", type=int, default=0,
+                        help="Min difficulty cut off level [default: %(default)s]")
+    parser.add_argument("-C", action="store_true", default=False,
+                        help="Use campus board [default: %(default)s]")
+    parser.add_argument("-F", action="store_true", default=False,
+                        help="Use fingerboard [default: %(default)s]")
+    parser.add_argument("-D", action="store", type=float, default=90,
+                        help="Duration in minutes [default: %(default)s]")
+    parser.add_argument("-S", action="store_true", default=False,
+                        help="Print summary and exit [default: %(default)s]")
+    parser.add_argument("-N", action="store", type=int, default=1,
+                        help="Create workout for N days [default: %(default)s]")
+    (opts, args) = parser.parse_known_args()
+
+    gen_wo(rope=opts.r, summary=opts.S, campus=opts.C, fingerboard=opts.F,
+           duration=opts.D, ndays=opts.N,
+           minlevel=max(0, opts.l), maxlevel=min(6, opts.L))
+
+
+def gen_wo(rope=False, summary=False, campus=False, fingerboard=False,
+           duration=90., ndays=1, minlevel=0, maxlevel=6):
     """Generate a workout of the day
 
     Parameters
@@ -84,174 +115,97 @@ def gen_wo(argv):
         for the complete list of accepted arguments
 
     """
-    now = datetime.datetime.now()
-    now = "{0}.{1}.{2}".format(now.year, now.month, now.day)
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    day, month, nday, hour, year = time.ctime().split()
-    today = "{0} {1} {2}".format(day.upper(), month.upper(), nday)
-
-    space = " " * 10
-
-    parser= argparse.ArgumentParser()
-    parser.add_argument("-w",
-                        dest="WEIGHT",
-                        action="store",
-                        default=None,
-                        help="Bodyweight [default: %(default)s]")
-    parser.add_argument("-d",
-                        dest="DATE",
-                        action="store_true",
-                        default=False,
-                        help="Enter date manually [default: %(default)s]")
-    parser.add_argument("-t",
-                         dest="TIME",
-                         action="store_true",
-                         default=False,
-                        help="Enter time manually [default: %(default)s]")
-    parser.add_argument("-r",
-                         dest="USE_ROPE",
-                         action="store_true",
-                         default=False,
-                        help=("Use activities that require a rope "
-                              "[default: %(default)s]"))
-    parser.add_argument("-L",
-                        dest="MAXLEVEL",
-                        action="store",
-                        type=int,
-                        default=6,
-                        help="Max difficulty cut off level [default: %(default)s]")
-    parser.add_argument("-l",
-                        dest="MINLEVEL",
-                        action="store",
-                        type=int,
-                        default=0,
-                        help="Min difficulty cut off level [default: %(default)s]")
-    parser.add_argument("-C",
-                        dest="CAMPUS",
-                        action="store_true",
-                        default=False,
-                        help="Use campus board [default: %(default)s]")
-    parser.add_argument("-F",
-                        dest="HANGBOARD",
-                        action="store_true",
-                        default=False,
-                        help="Use fingerboard [default: %(default)s]")
-    parser.add_argument("--loc",
-                        dest="LOCATION",
-                        action="store",
-                        default=None,
-                        help="Location [default: %(default)s]")
-    parser.add_argument("-f",
-                        dest="FILE",
-                        action="store_true",
-                        default=False,
-                        help="Write to logfile [default: %(default)s]")
-    parser.add_argument("-D",
-                        action="store",
-                        type=float,
-                        default=90,
-                        help="Duration [default: %(default)s]")
-    parser.add_argument("-S",
-                        action="store_true",
-                        default=False,
-                        help="Print summary and exit [default: %(default)s]")
-    (opts, args) = parser.parse_known_args()
-
-    if opts.S:
-        types = list(set([WO_DB.get(x, "type") for x in WO_DB.sections()]))
-        print "Workout types: {0}".format(
-            ", ".join(sorted(list(set(x.split("&")[0] for x in types)))))
-        print "Number of workouts {0}".format(len(WO_DB.sections()))
-        sys.exit(textfill("Workouts: {0}".format(", ".join(WO_DB.sections())), 78,
-                          subsequent_indent="   "))
+    if summary:
+        logging.info("Workout types: {0}".format(
+                ", ".join(sorted(list(set(x.split(SEP)[0] for x in TYPES))))))
+        logging.info("Number of workouts {0}".format(len(WORKOUTS)))
+        logging.info(textfill("Workouts: {0}".format(", ".join(WORKOUTS)), 78,
+                              subsequent_indent="   "))
+        return 0
 
 
     # incompatible options
-    if opts.CAMPUS and opts.HANGBOARD:
-        sys.exit("Cannot due both campus and hangboard")
+    if campus and fingerboard and ndays == 1:
+        sys.exit(
+            "Campus and hangboard workout on the same day? I don't think so!")
 
-    # set defaults
-    _weight = space if not opts.WEIGHT else opts.WEIGHT
-    _date = space if opts.DATE else today
-    _time = space if opts.TIME else hour
-    _location = space if not opts.LOCATION else opts.LOCATION
-    _min = max(0, opts.MINLEVEL)
-    _max = min(6, opts.MAXLEVEL)
+    # list of filtered exercises
+    xs = []
+    for workout in WORKOUTS:
 
-    # log file
-    logf = None
-    if opts.FILE:
-        scriptd, exe = os.path.split(os.path.realpath(__file__))
-        logd = os.path.join(scriptd, "Logs")
-        if not os.path.isdir(logd):
-            os.mkdir(logd)
-        logf = os.path.join(logd, now + ".log")
+        if disabled(workout):
+            continue
 
-    logger = Logger(_date, _weight, _time, _location, fnam=logf)
+        # prune any requiring rope, unless requested
+        if not rope and rope_reqd(workout):
+            continue
 
+        if "conditioning" in wotype(workout):
+            if not campus and "campus board" in equipment(workout):
+                continue
+            if not fingerboard and "fingerboard" in equipment(workout):
+                continue
 
-    # list of all exercises
-    xs = WO_DB.sections()
-    if not opts.USE_ROPE:
-        xs = [x for x in xs if not WO_DB.getboolean(x, "rope_reqd")]
+        xs.append(workout)
+        continue
 
-    # warm up
-    # choose from exercises of type "technique"
-    # The total warm up accounts for 15% of the workout time
-    technique = [x for x in xs if "technique" in WO_DB.get(x, "type")]
-    WU = technique[random.randint(0, len(technique) - 1)]
-    logger.write("WARM UP, {0} minutes, calisthenics".format(.075 * opts.D))
-    logger.write("WARM UP, {0} minutes, {1}".format(.075 * opts.D, WU))
-    logger.write("DESCRIPTION")
-    logger.write("  {0}".format(WO_DB.get(WU, "description")), sp=2)
+    for _i in range(ndays):
+        logging.info("{1}\nDAY {0}\n{1}".format(_i + 1, "-" * 78))
 
-    # skill building
-    # choose from exercises of type "skill"
-    # skill building accounts for 10% of the workout time
-    skill = [x for x in xs if "skill" in WO_DB.get(x, "type")]
-    SB = skill[random.randint(0, len(skill) - 1)]
-    logger.write("\nSKILL BUILDING, {0} minutes, {1}".format(.1 * opts.D, SB))
-    logger.write("DESCRIPTION")
-    logger.write("  {0}".format(WO_DB.get(SB, "description")), sp=2)
+        # warm up
+        # choose from exercises of type "technique"
+        # The total warm up accounts for 15% of the workout time
+        technique = [x for x in xs if
+                     "technique" in wotype(x) or "warm up" in wotype(x) ]
+        WU = technique[random.randint(0, len(technique) - 1)]
+        logging.info(
+            "WARM UP, {0} minutes, calisthenics\n"
+            "         {0} minutes, {1}\nDESCRIPTION"
+            .format(.075 * duration, WU, msg(desc(WU))))
 
-    # conditioning
-    # choose from exercises of type "conditioning"
-    # conditioning accounts for 65% of the workout time
-    conditioning = [x for x in xs
-                    if "conditioning" in WO_DB.get(x, "type")
-                    and _min < WO_DB.getint(x, "level") <= _max]
+        # skill building
+        # choose from exercises of type "skill"
+        # skill building accounts for 10% of the workout time
+        skill = [x for x in xs
+                 if "skill" in wotype(x) and minlevel < level(x) <= maxlevel]
+        SB = skill[random.randint(0, len(skill) - 1)]
+        logging.info(
+            "\nSKILL BUILDING, {0} minutes, {1}\nDESCRIPTION"
+            .format(.1 * duration, SB, msg(desc(SB))))
 
-    # filter out exercises that do not meet specified criteria
-    if opts.CAMPUS:
-        conditioning = [x for x in conditioning
-                        if "campus" in  WO_DB.get(x, "equipment")]
-    elif opts.HANGBOARD:
-        conditioning = [x for x in conditioning
-                        if "fingerboard" in  WO_DB.get(x, "equipment")]
+        # conditioning
+        # choose from exercises of type "conditioning"
+        # conditioning accounts for 65% of the workout time
+        conditioning = [ x for x in xs
+            if "conditioning" in wotype(x) and minlevel < level(x) <= maxlevel]
 
-    if not conditioning:
-        print "\n\n\nCould not find workout that matched, choosing random\n\n\n"
-        conditioning = [x for x in xs if "conditioning" in WO_DB.get(x, "type")]
+        if not conditioning:
+            logging.info(
+                "nCould not find workout that matched, choosing random\n")
+            conditioning = [x for x in WORKOUTS if "conditioning" in wotype(x)]
 
-    CND = conditioning[random.randint(0, len(conditioning) - 1)]
-    C, A = WO_DB.get(CND, "type").split("&", 1)
-    logger.write("\nCONDITIONING, {0} minutes, {1}".format(.65 * opts.D, CND))
-    logger.write("TYPE: {0}".format(A))
-    logger.write("DESCRIPTION")
-    logger.write("  {0}".format(WO_DB.get(CND, "description")), sp=2)
+        CND = conditioning[random.randint(0, len(conditioning) - 1)]
+        C, A = wotype(CND)[0], wotype(CND)[1]
+        logging.info(
+            "\nCONDITIONING, {0} minutes, {1}\nTYPE: {2}\nDESCRIPTION: {3}"
+            .format(.65 * duration, CND, A, msg(desc(CND))))
 
-    # cool down
-    # cool down accounts for 10% of workout time
-    logger.write("\nCOOL DOWN, {0} minutes, Easy climbing".format(.1 * opts.D))
+        # cool down
+        # cool down accounts for 10% of workout time
+        logging.info(
+            "\nCOOL DOWN, {0} minutes, Easy climbing".format(.1 * duration))
 
-    # summary
-    logger.write("\nSUMMARY")
-    logger.write("WARM UP: {0}".format(WU))
-    logger.write("SKILL BUILDING: {0}".format(SB))
-    logger.write("CONDITIONING: {0}".format(CND))
+        # summary
+        logging.info(
+            "\nSUMMARY\nWARM UP: {0}\nSKILL BUILDING: {1}\nCONDITIONING: {2}\n\n"
+            .format(WU, SB, CND))
 
-    logger.close()
-    return
+        continue
+
+    return 0
+
 
 if __name__ == "__main__":
-    gen_wo(sys.argv[1:])
+    main(sys.argv[1:])
