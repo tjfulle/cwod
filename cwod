@@ -115,7 +115,8 @@ def gen_wo(rope=False, summary=False, campus=False, fingerboard=False,
         for the complete list of accepted arguments
 
     """
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    logging.basicConfig(level=logging.INFO, format="%(message)s",
+                        stream=sys.stdout)
 
     if summary:
         logging.info("Workout types: {0}".format(
@@ -171,9 +172,8 @@ def gen_wo(rope=False, summary=False, campus=False, fingerboard=False,
         skill = [x for x in xs
                  if "skill" in wotype(x) and minlevel < level(x) <= maxlevel]
         SB = skill[random.randint(0, len(skill) - 1)]
-        logging.info(
-            "\nSKILL BUILDING, {0} minutes, {1}\nDESCRIPTION"
-            .format(.1 * duration, SB, msg(desc(SB))))
+        logging.info("\nSKILL BUILDING, {0} minutes, {1}\nDESCRIPTION"
+                     .format(.1 * duration, SB, msg(desc(SB))))
 
         # conditioning
         # choose from exercises of type "conditioning"
